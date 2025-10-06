@@ -1,479 +1,345 @@
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+local Players, RunService, Camera, LocalPlayer, Mouse =
+    game:GetService("Players"), game:GetService("RunService"),
+    workspace.CurrentCamera, game.Players.LocalPlayer, game.Players.LocalPlayer:GetMouse()
 
 local Window = WindUI:CreateWindow({
-    Title = "Zeta Combat Hub",
-    Icon = "sword",
-    Author = "by Alpha",
-    Folder = "ZetaHub", 
-    Theme = "Dark"
+    Title = "YOMO HUB โ” v0.1๐’",
+    Icon = "zap",
+    Author = "My Didcos>    https://discord.gg/xWW3jhKM",
+    Folder = "GotHubFolder",
+    Size = UDim2.fromOffset(400, 200),
+    Theme = "Dark",
+    Transparent = true,
+    Resizable = true,
 })
 
--- Services
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local LocalPlayer = Players.LocalPlayer
-local Camera = workspace.CurrentCamera
+local Tab = Window:Tab({Title = "Silent Aim", Icon = "crosshair"})
 
-local Send = ReplicatedStorage.Remotes.Send
+local SilentAimEnabled = false
+local FOVRadius = 120
+local CurrentTarget = nil
 
--- Aimbot Variables
-local CurrentShootToken = 545
-local TargetPlayer = nil
-local AimbotEnabled = false
+local SilentFOVCircle = Drawing.new("Circle")
+SilentFOVCircle.Color = Color3.fromRGB(255, 0, 0)
+SilentFOVCircle.Thickness = 1.5
+SilentFOVCircle.NumSides = 64
+SilentFOVCircle.Filled = false
+SilentFOVCircle.Transparency = 1
+SilentFOVCircle.Radius = FOVRadius
+SilentFOVCircle.Visible = false
 
--- ESP Variables
-local ESPEnabled = false
-local BoxESPEnabled = false
-local PlayerInfoEnabled = false
-local ESPData = {}
+local Tracer = Drawing.new("Line")
+Tracer.Thickness = 1.5
+Tracer.Color = Color3.fromRGB(0, 255, 255)
+Tracer.Transparency = 1
+Tracer.Visible = false
 
--- Drawing Objects
-local FOVCircle = Drawing.new("Circle")
-local TracerLine = Drawing.new("Line")
-local TargetNameText = Drawing.new("Text")
-
--- Setup FOV Circle
-FOVCircle.Visible = false
-FOVCircle.Radius = 100
-FOVCircle.Color = Color3.new(1, 0, 0)
-FOVCircle.Thickness = 2
-FOVCircle.Transparency = 0.3
-FOVCircle.Filled = false
-
--- Setup Tracer Line
-TracerLine.Visible = false  
-TracerLine.Color = Color3.new(1, 0, 0)
-TracerLine.Thickness = 2
-
--- Setup Target Name Text
-TargetNameText.Visible = false
-TargetNameText.Color = Color3.new(1, 1, 1)
-TargetNameText.Size = 18
-TargetNameText.Center = true
-TargetNameText.Outline = true
-TargetNameText.Font = 2
-
--- ==================== AIMBOT SYSTEM ====================
-
--- ระบบตรวจจับปืนอัตโนมัติ
-local function detectWeapon()
-    local character = LocalPlayer.Character
-    if not character then return nil end
-    
-    for _, tool in ipairs(character:GetChildren()) do
-        if tool:IsA("Tool") then
-            return tool
-        end
-    end
-    return nil
+local function getPing()
+	local stats = LocalPlayer:FindFirstChild("PlayerGui"):FindFirstChild("NetworkStats")
+	if stats then
+		local pingText = stats:FindFirstChild("PingLabel")
+		if pingText then
+			local ping = tonumber(pingText.Text:match("%d+"))
+			return ping and ping/1000 or 0.2
+		end
+	end
+	return 0.2
 end
 
--- หาเป้าหมายเดียวใน FOV
-local function findTargetInFOV()
-    local closest = nil
-    local closestDistance = FOVCircle.Radius
-    local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+local function getClosestTarget()
+	local closest = nil
+	local shortestDistance = math.huge
+	local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
 
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character then
-            local humanoid = player.Character:FindFirstChild("Humanoid")
-            local head = player.Character:FindFirstChild("Head")
-            
-            if humanoid and humanoid.Health > 0 and head then
-                local screenPoint, visible = Camera:WorldToViewportPoint(head.Position)
-                if visible then
-                    local distance = (Vector2.new(screenPoint.X, screenPoint.Y) - center).Magnitude
-                    if distance < closestDistance then
-                        closest = player
-                        closestDistance = distance
-                    end
-                end
-            end
-        end
-    end
-    
-    return closest
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Head") then
+			local head = player.Character.Head
+			local pos, onScreen = Camera:WorldToViewportPoint(head.Position)
+
+			if onScreen then
+				local screenPos = Vector2.new(pos.X, pos.Y)
+				local distFromCenter = (screenPos - center).Magnitude
+
+				
+				if distFromCenter <= FOVRadius then
+					
+					local toTarget = (head.Position - Camera.CFrame.Position).Unit
+					local forward = Camera.CFrame.LookVector
+					local dot = forward:Dot(toTarget)
+
+					if dot > 0.5 then
+						local distance3D = (head.Position - LocalPlayer.Character.Head.Position).Magnitude
+
+						
+						if distance3D < shortestDistance then
+							shortestDistance = distance3D
+							closest = player
+						end
+					end
+				end
+			end
+		end
+	end
+
+	return closest
 end
 
--- ฟังก์ชันยิง
-local function manualShoot()
-    if not TargetPlayer or not TargetPlayer.Character then 
-        print("❌ ไม่มีเป้าหมายที่จะยิง")
-        return 
-    end
-    
-    local weapon = detectWeapon()
-    local head = TargetPlayer.Character:FindFirstChild("Head")
-    
-    if weapon and head then
-        Send:FireServer(
-            CurrentShootToken,
-            "shoot_gun",
-            weapon,
-            weapon.Handle.CFrame,
-            {
-                {
-                    {
-                        Instance = head,
-                        Normal = Vector3.new(0, 1, 0),
-                        Position = head.Position
-                    }
-                }
-            }
-        )
-        print("🔫 ยิงเป้าหมาย: " .. TargetPlayer.Name)
-    else
-        print("❌ ไม่พบปืนหรือหัวเป้าหมาย")
-    end
+local function predictPosition(head, hrp)
+	local ping = getPing()
+	local velocity = hrp and hrp.Velocity or Vector3.zero
+	return head.Position + (velocity * ping * 1.15)
 end
 
--- อัพเดท Visuals Aimbot
-local function updateAimbotVisuals()
-    local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
-    
-    FOVCircle.Position = center
-    FOVCircle.Visible = AimbotEnabled
-    
-    if TargetPlayer and TargetPlayer.Character then
-        local head = TargetPlayer.Character:FindFirstChild("Head")
-        if head then
-            local screenPoint, visible = Camera:WorldToViewportPoint(head.Position)
-            if visible then
-                -- Tracer Line
-                TracerLine.From = center
-                TracerLine.To = Vector2.new(screenPoint.X, screenPoint.Y)
-                TracerLine.Visible = AimbotEnabled
-                
-                -- Target Name Text
-                local displayName = "workspace." .. TargetPlayer.Name .. ".Head"
-                TargetNameText.Text = displayName
-                TargetNameText.Position = Vector2.new(screenPoint.X, screenPoint.Y - 30)
-                TargetNameText.Visible = AimbotEnabled
-                return
-            end
-        end
-    end
-    
-    TracerLine.Visible = false
-    TargetNameText.Visible = false
-end
+RunService.RenderStepped:Connect(function()
+	SilentFOVCircle.Visible = SilentAimEnabled
+	SilentFOVCircle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+	SilentFOVCircle.Radius = FOVRadius
 
--- ใช้ปุ่มยิงเดิมของเกม (เมื่อกดยิงปกติ)
-local function hookGameShootButton()
-    -- เมื่อผู้เล่นกดปุ่มยิงของเกม ให้ตรวจสอบว่ามีเป้าหมายหรือไม่
-    local originalFire = Send.FireServer
-    Send.FireServer = function(self, ...)
-        local args = {...}
-        
-        -- ถ้าเป็นคำสั่งยิงและมีเป้าหมายล็อคอยู่
-        if args[2] == "shoot_gun" and AimbotEnabled and TargetPlayer then
-            local weapon = detectWeapon()
-            local head = TargetPlayer.Character:FindFirstChild("Head")
-            
-            if weapon and head then
-                -- แทนที่ด้วยการยิงเป้าหมายที่ล็อค
-                args[4] = weapon.Handle.CFrame
-                args[5] = {
-                    {
-                        {
-                            Instance = head,
-                            Normal = Vector3.new(0, 1, 0),
-                            Position = head.Position
-                        }
-                    }
-                }
-                print("🎯 ยิงเป้าหมายที่ล็อค: " .. TargetPlayer.Name)
-            end
-        end
-        
-        return originalFire(self, unpack(args))
-    end
-end
+	if SilentAimEnabled then
+		CurrentTarget = getClosestTarget()
+	else
+		CurrentTarget = nil
+	end
 
--- ==================== ESP SYSTEM ====================
+	if CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Head") then
+		local targetHead = CurrentTarget.Character.Head
+		local myHead = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head")
+		if myHead then
+			local myScreenPos, myOnScreen = Camera:WorldToViewportPoint(myHead.Position)
+			local targetScreenPos, targetOnScreen = Camera:WorldToViewportPoint(targetHead.Position)
+			if myOnScreen and targetOnScreen then
+				Tracer.Visible = true
+				Tracer.From = Vector2.new(myScreenPos.X, myScreenPos.Y)
+				Tracer.To = Vector2.new(targetScreenPos.X, targetScreenPos.Y)
+			else
+				Tracer.Visible = false
+			end
+		end
+	else
+		Tracer.Visible = false
+	end
+end)
 
--- ฟังก์ชันสร้าง ESP สำหรับผู้เล่น
-local function createESP(player)
-    if ESPData[player] then return end
-    
-    ESPData[player] = {
-        Box = {
-            TopLeft = Drawing.new("Line"),
-            TopRight = Drawing.new("Line"),
-            BottomLeft = Drawing.new("Line"),
-            BottomRight = Drawing.new("Line")
-        },
-        NameText = Drawing.new("Text"),
-        DistanceText = Drawing.new("Text"),
-        HealthText = Drawing.new("Text")
-    }
-    
-    local esp = ESPData[player]
-    
-    -- ตั้งค่ากรอบ Box
-    for _, line in pairs(esp.Box) do
-        line.Thickness = 2
-        line.Color = Color3.new(1, 0, 0)
-    end
-    
-    -- ตั้งค่าข้อความ
-    esp.NameText.Size = 14
-    esp.NameText.Outline = true
-    esp.NameText.Color = Color3.new(1, 1, 1)
-    
-    esp.DistanceText.Size = 12
-    esp.DistanceText.Outline = true
-    esp.DistanceText.Color = Color3.new(1, 1, 0)
-    
-    esp.HealthText.Size = 12
-    esp.HealthText.Outline = true
-    esp.HealthText.Color = Color3.new(0, 1, 0)
-end
+local oldFire
+oldFire = hookfunction(game:GetService("ReplicatedStorage").Remotes.Send.FireServer, function(self, ...)
+	local args = {...}
+	if SilentAimEnabled and args[2] == "shoot_gun" and CurrentTarget then
+		local head = CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Head")
+		local hrp = CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("HumanoidRootPart")
+		if head then
+			local aimPos = predictPosition(head, hrp)
 
--- ฟังก์ชันอัพเดท ESP
-local function updateESP(player)
-    if not ESPData[player] then return end
-    
-    local character = player.Character
-    if not character then return end
-    
-    local humanoid = character:FindFirstChild("Humanoid")
-    local head = character:FindFirstChild("Head")
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    
-    if not humanoid or humanoid.Health <= 0 or not head or not rootPart then
-        for _, line in pairs(ESPData[player].Box) do
-            line.Visible = false
-        end
-        ESPData[player].NameText.Visible = false
-        ESPData[player].DistanceText.Visible = false
-        ESPData[player].HealthText.Visible = false
-        return
-    end
-    
-    local headPos, headVisible = Camera:WorldToViewportPoint(head.Position)
-    local rootPos, rootVisible = Camera:WorldToViewportPoint(rootPart.Position)
-    
-    if headVisible and rootVisible then
-        local esp = ESPData[player]
-        
-        -- คำนวณขนาด Box
-        local height = math.abs(headPos.Y - rootPos.Y) * 1.5
-        local width = height * 0.6
-        
-        local topLeft = Vector2.new(headPos.X - width/2, headPos.Y - height/2)
-        local topRight = Vector2.new(headPos.X + width/2, headPos.Y - height/2)
-        local bottomLeft = Vector2.new(headPos.X - width/2, headPos.Y + height/2)
-        local bottomRight = Vector2.new(headPos.X + width/2, headPos.Y + height/2)
-        
-        -- อัพเดท Box
-        if BoxESPEnabled then
-            esp.Box.TopLeft.From = topLeft
-            esp.Box.TopLeft.To = topRight
-            esp.Box.TopLeft.Visible = true
-            
-            esp.Box.TopRight.From = topRight
-            esp.Box.TopRight.To = bottomRight
-            esp.Box.TopRight.Visible = true
-            
-            esp.Box.BottomLeft.From = bottomLeft
-            esp.Box.BottomLeft.To = bottomRight
-            esp.Box.BottomLeft.Visible = true
-            
-            esp.Box.BottomRight.From = bottomLeft
-            esp.Box.BottomRight.To = topLeft
-            esp.Box.BottomRight.Visible = true
-        else
-            for _, line in pairs(esp.Box) do
-                line.Visible = false
-            end
-        end
-        
-        -- อัพเดท Player Info
-        if PlayerInfoEnabled then
-            -- ชื่อผู้เล่น
-            esp.NameText.Text = player.Name
-            esp.NameText.Position = Vector2.new(headPos.X, headPos.Y - height/2 - 20)
-            esp.NameText.Visible = true
-            
-            -- ระยะทาง
-            local distance = (LocalPlayer.Character.Head.Position - head.Position).Magnitude
-            esp.DistanceText.Text = string.format("%.1fm", distance)
-            esp.DistanceText.Position = Vector2.new(headPos.X, headPos.Y - height/2 - 35)
-            esp.DistanceText.Visible = true
-            
-            -- HP
-            esp.HealthText.Text = string.format("HP: %d", math.floor(humanoid.Health))
-            esp.HealthText.Position = Vector2.new(headPos.X, headPos.Y - height/2 - 50)
-            esp.HealthText.Visible = true
-        else
-            esp.NameText.Visible = false
-            esp.DistanceText.Visible = false
-            esp.HealthText.Visible = false
-        end
-    else
-        for _, line in pairs(ESPData[player].Box) do
-            line.Visible = false
-        end
-        ESPData[player].NameText.Visible = false
-        ESPData[player].DistanceText.Visible = false
-        ESPData[player].HealthText.Visible = false
-    end
-end
+			args[4] = CFrame.new(LocalPlayer.Character.Head.Position, aimPos)
+			args[5] = {
+				[1] = {
+					[1] = {
+						["Instance"] = head,
+						["Normal"] = Vector3.new(0, 1, 0),
+						["Position"] = aimPos
+					}
+				}
+			}
 
--- ฟังก์ชันลบ ESP
-local function removeESP(player)
-    if ESPData[player] then
-        for _, line in pairs(ESPData[player].Box) do
-            line:Remove()
-        end
-        ESPData[player].NameText:Remove()
-        ESPData[player].DistanceText:Remove()
-        ESPData[player].HealthText:Remove()
-        ESPData[player] = nil
-    end
-end
+			local beam = Instance.new("Part", workspace)
+			beam.Anchored = true
+			beam.CanCollide = false
+			beam.Size = Vector3.new(0.15, 0.15, (aimPos - LocalPlayer.Character.Head.Position).Magnitude)
+			beam.CFrame = CFrame.new(LocalPlayer.Character.Head.Position, aimPos) * CFrame.new(0, 0, -beam.Size.Z/2)
+			beam.Color = Color3.fromRGB(255, 50, 50)
+			beam.Material = Enum.Material.Neon
+			beam.Transparency = 0.25
+			game:GetService("Debris"):AddItem(beam, 0.15)
+		end
+	end
+	return oldFire(self, unpack(args))
+end)
 
--- ==================== UI SETUP ====================
 
--- Tab Combat
-local CombatTab = Window:Tab({
-    Title = "Combat",
-    Icon = "target"
+Tab:Toggle({
+	Title = "Silent Aim",
+	Default = false,
+	Callback = function(state)
+		SilentAimEnabled = state
+	end
 })
 
--- Tab ESP
-local ESPTab = Window:Tab({
+Tab:Slider({
+    Title = "FOV: ",
+    Step = 1,
+    Value = {
+        Min = 20,
+        Max = 300,
+        Default = FOVRadius,
+    },
+    Callback = function(value)
+        FOVRadius = tonumber(value) or 120
+        print("FOV",FOVRadius)
+    end
+})
+
+local Tab_ESP = Window:Tab({
     Title = "ESP",
-    Icon = "eye"
+    Icon = "eye",
 })
 
--- UI Elements ใน Tab Combat
-local AimbotToggle = CombatTab:Toggle({
-    Title = "Aimbot Lock",
+local boxESPEnabled = false
+local nameESPEnabled = false
+local distanceESPEnabled = false
+
+Tab_ESP:Toggle({
+    Title = "Box ESP",
     Default = false,
-    Callback = function(value)
-        AimbotEnabled = value
-        if value then
-            hookGameShootButton()
-        end
-        if not value then
-            TargetPlayer = nil
-            TracerLine.Visible = false
-            TargetNameText.Visible = false
-        end
-        print("🎯 Aimbot Lock:", value)
+    Callback = function(state)
+        boxESPEnabled = state
     end
 })
 
-local FOVSlider = CombatTab:Slider({
-    Title = "FOV Size",
-    Min = 50,
-    Max = 300,
-    Default = 100,
-    Callback = function(value)
-        FOVCircle.Radius = value
-    end
-})
-
-local ShootInstruction = CombatTab:Label({
-    Title = "ใช้ปุ่มยิงเดิมของเกม",
-    Callback = function() end
-})
-
--- UI Elements ใน Tab ESP
-local ESPToggle = ESPTab:Toggle({
-    Title = "ESP Master",
+Tab_ESP:Toggle({
+    Title = "Name ESP",
     Default = false,
-    Callback = function(value)
-        ESPEnabled = value
-        if not value then
-            BoxESPEnabled = false
-            PlayerInfoEnabled = false
-            for player, _ in pairs(ESPData) do
-                removeESP(player)
-            end
-        end
-        print("👁️ ESP Master:", value)
+    Callback = function(state)
+        nameESPEnabled = state
     end
 })
 
-local BoxToggle = ESPTab:Toggle({
-    Title = "Box",
+Tab_ESP:Toggle({
+    Title = "Distance ESP",
     Default = false,
-    Callback = function(value)
-        BoxESPEnabled = value and ESPEnabled
-        print("📦 Box ESP:", BoxESPEnabled)
+    Callback = function(state)
+        distanceESPEnabled = state
     end
 })
+local espConnections = {}
 
-local PlayerInfoToggle = ESPTab:Toggle({
-    Title = "Player Info",
-    Default = false,
-    Callback = function(value)
-        PlayerInfoEnabled = value and ESPEnabled
-        print("👤 Player Info:", PlayerInfoEnabled)
+local function createESP(player)
+    local lines = {
+        top = Drawing.new("Line"),
+        bottom = Drawing.new("Line"),
+        left = Drawing.new("Line"),
+        right = Drawing.new("Line"),
+    }
+
+    local nameText = Drawing.new("Text")
+    nameText.Size = 12
+    nameText.Center = true
+    nameText.Outline = true
+    nameText.Color = Color3.new(1,1,1)
+
+    local distanceText = Drawing.new("Text")
+    distanceText.Size = 10
+    distanceText.Center = true
+    distanceText.Outline = true
+    distanceText.Color = Color3.fromRGB(255, 255, 255)
+
+    for _, line in pairs(lines) do
+        line.Color = Color3.new(1, 1, 1)
+        line.Thickness = 1
+        line.Visible = false
     end
-})
 
-local ESPColorPicker = ESPTab:ColorPicker({
-    Title = "Box Color",
-    Default = Color3.new(1, 0, 0),
-    Callback = function(color)
-        for player, esp in pairs(ESPData) do
-            for _, line in pairs(esp.Box) do
-                line.Color = color
+    nameText.Visible = false
+    distanceText.Visible = false
+
+    local conn = RunService.RenderStepped:Connect(function()
+        if not player.Character or not player.Character:FindFirstChild("Head") or not player.Character:FindFirstChild("HumanoidRootPart") then
+            for _, line in pairs(lines) do line.Visible = false end
+            nameText.Visible = false
+            distanceText.Visible = false
+            return
+        end
+
+        local head = player.Character.Head
+        local hrp = player.Character.HumanoidRootPart
+
+        local topWorld = head.Position + Vector3.new(0, 0.5, 0)
+        local bottomWorld = hrp.Position - Vector3.new(0, 3, 0)
+
+        local top, onTop = Camera:WorldToViewportPoint(topWorld)
+        local bottom, onBottom = Camera:WorldToViewportPoint(bottomWorld)
+
+        if onTop and onBottom and top.Z > 0 and bottom.Z > 0 then
+            local height = math.abs(top.Y - bottom.Y)
+            local width = height / 1.8
+            local x = top.X - width / 2
+            local y = top.Y
+
+            local tl = Vector2.new(x, y)
+            local tr = Vector2.new(x + width, y)
+            local bl = Vector2.new(x, y + height)
+            local br = Vector2.new(x + width, y + height)
+
+           
+            if boxESPEnabled then
+                lines.top.From = tl
+                lines.top.To = tr
+
+                lines.bottom.From = bl
+                lines.bottom.To = br
+
+                lines.left.From = tl
+                lines.left.To = bl
+
+                lines.right.From = tr
+                lines.right.To = br
+
+                for _, line in pairs(lines) do line.Visible = true end
+            else
+                for _, line in pairs(lines) do line.Visible = false end
             end
-        end
-        print("🎨 เปลี่ยนสี Box เป็น:", color)
-    end
-})
 
--- ==================== MAIN LOOPS ====================
-
--- Aimbot Loop
-RunService.RenderStepped:Connect(function()
-    if AimbotEnabled then
-        local newTarget = findTargetInFOV()
-        if newTarget ~= TargetPlayer then
-            TargetPlayer = newTarget
-            if TargetPlayer then
-                print("🎯 ล็อคเป้าหมาย: " .. TargetPlayer.Name)
+           
+            if nameESPEnabled then
+                nameText.Text = player.Name
+                nameText.Position = Vector2.new(top.X, y - 16)
+                nameText.Visible = true
+            else
+                nameText.Visible = false
             end
-        end
-        updateAimbotVisuals()
-    else
-        FOVCircle.Visible = false
-        TracerLine.Visible = false
-        TargetNameText.Visible = false
-    end
-end)
 
--- ESP Loop
-RunService.RenderStepped:Connect(function()
-    if ESPEnabled then
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer then
-                if not ESPData[player] then
-                    createESP(player)
-                end
-                updateESP(player)
+           
+            if distanceESPEnabled then
+                local dist = (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart"))
+                    and (hrp.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude or 0
+                distanceText.Text = string.format("%.0f Distance", dist)
+                distanceText.Position = Vector2.new(top.X, y + height + 4)
+                distanceText.Visible = true
+            else
+                distanceText.Visible = false
             end
+        else
+            for _, line in pairs(lines) do line.Visible = false end
+            nameText.Visible = false
+            distanceText.Visible = false
         end
-    else
-        for player, _ in pairs(ESPData) do
-            removeESP(player)
+    end)
+
+    table.insert(espConnections, conn)
+end
+
+local function loadESP()
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            createESP(player)
         end
     end
-end)
 
--- ลบ ESP เมื่อผู้เล่นออก
-Players.PlayerRemoving:Connect(function(player)
-    removeESP(player)
-end)
+    Players.PlayerAdded:Connect(function(player)
+        player.CharacterAdded:Connect(function()
+            wait(1)
+            createESP(player)
+        end)
+    end)
+end
 
-print("✅ Zeta Ultimate System พร้อมใช้งาน!")
-print("🎯 Aimbot + ESP System รวมเป็นหนึ่งเดียว")
-print("🎮 ใช้ปุ่มยิงเดิมของเกม - ไม่มีปุ่มเขียว")
+local function clearESP()
+    for _, conn in pairs(espConnections) do
+        if typeof(conn) == "RBXScriptConnection" then
+            conn:Disconnect()
+        end
+    end
+    espConnections = {}
+end
+
+local Tab_FPS = Window:Tab({
+  
